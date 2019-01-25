@@ -4,6 +4,8 @@ Repository that contains minimal implementations of the graph neural network lay
 All necessary functions are included in the individual python files. The layers can be used analogously to tensorflow layers. 
 Keras wrappers will follow.
 
+The tensorflow version needs to be at least 1.8.
+
 When using these layers to build models or modifying them, please cite our paper:
 
 ```
