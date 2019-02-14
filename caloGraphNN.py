@@ -194,14 +194,34 @@ def sparse_conv_multi_neighbours(vertices_in,
         return collapsed
     
     indexing, distance = indexing_tensor_2(neighb_dimensions, n_neighbours)
-    collapsed = collapse_to_vertex(indexing,distance,vertices_prop,individual_conv)
+    collapsed = collapse_to_vertex(indexing,distance,vertices_prop)
     updated_vertices = tf.concat([vertices_in,collapsed],axis=-1)
 
     return high_dim_dense(updated_vertices,n_filters,activation=tf.nn.tanh)
- 
-    
 
 
+def sparse_conv_global_exchange(vertices_in):
+    trans_vertices_in = vertices_in
+
+    global_summed = tf.reduce_mean(trans_vertices_in, axis=1, keepdims=True)
+
+    global_summed = tf.tile(global_summed, [1, vertices_in.shape[1], 1])
+    vertices_out = tf.concat([vertices_in, global_summed], axis=-1)
+
+    return vertices_out
+
+
+def max_pool_on_last_dimensions(vertices_in, n_output_vertices):
+    all_features = vertices_in
+
+    _, I = tf.nn.top_k(tf.reduce_max(all_features, axis=2), n_output_vertices)
+    I = tf.expand_dims(I, axis=2)
+
+    batch_range = tf.expand_dims(tf.expand_dims(tf.range(0, vertices_in.shape[0]), axis=1), axis=1)
+    batch_range = tf.tile(batch_range, [1, n_output_vertices, 1])
+    _indexing_tensor = tf.concat([batch_range, I], axis=2)
+
+    return tf.gather_nd(vertices_in, _indexing_tensor)
 
 
 
