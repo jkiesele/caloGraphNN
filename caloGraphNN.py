@@ -211,18 +211,6 @@ def layer_global_exchange(vertices_in):
     return vertices_out
 
 
-def max_pool_on_last_dimensions(vertices_in, n_output_vertices):
-    all_features = vertices_in
-
-    _, I = tf.nn.top_k(tf.reduce_max(all_features, axis=2), n_output_vertices)
-    I = tf.expand_dims(I, axis=2)
-
-    batch_range = tf.expand_dims(tf.expand_dims(tf.range(0, vertices_in.shape[0]), axis=1), axis=1)
-    batch_range = tf.tile(batch_range, [1, n_output_vertices, 1])
-    _indexing_tensor = tf.concat([batch_range, I], axis=2)
-
-    return tf.gather_nd(vertices_in, _indexing_tensor)
-
 
 
 
