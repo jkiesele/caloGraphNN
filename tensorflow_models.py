@@ -52,35 +52,4 @@ def get_GarNet_model_for_clustering(input, training, momentum):
     return feat
 
 
-def get_GravNet_model_for_classification(input, num_classes, training, momentum):
-    x = input
-
-    propagate = 18
-    dimensions = 4
-
-    batch_size = input.shape[0]
-
-    nsensors = [
-        (1024, 40, 24),
-        (512, 40, 24),
-        (256, 40, 32),
-        (128, 40, 32),
-        (32, 40, 64),
-        (4, 32, 64)
-    ]
-    for nsen, nneigh, filt in nsensors:
-        x = layer_global_exchange(x)
-        x = high_dim_dense(x, 64, activation=tf.nn.tanh)
-        x = high_dim_dense(x, 64, activation=tf.nn.tanh)
-        x = high_dim_dense(x, 64, activation=tf.nn.tanh)
-        x = layer_GravNet(x, nneigh, dimensions, filt, propagate)
-        x = tf.layers.batch_normalization(x, momentum=momentum, training=training)
-        x = max_pool_on_last_dimensions(x, nsen)
-
-    x = tf.reshape(x, shape=(batch_size, -1))
-    x = high_dim_dense(x, 256, activation=tf.nn.relu)
-    x = high_dim_dense(x, 256, activation=tf.nn.relu)
-    x = high_dim_dense(x, num_classes, activation=tf.nn.relu)
-
-    return x
 
