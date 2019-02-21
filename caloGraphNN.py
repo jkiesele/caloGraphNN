@@ -35,7 +35,7 @@ def euclidean_squared(A, B):
     return tf.abs(sub_factor + dotA + dotB)
 
 
-def nearest_neighbor_matrix_2(spatial_features, k=10):
+def nearest_neighbor_matrix(spatial_features, k=10):
     """
     Nearest neighbors matrix given spatial features.
 
@@ -57,7 +57,7 @@ def nearest_neighbor_matrix_2(spatial_features, k=10):
 
 
 
-def indexing_tensor_2(spatial_features, k=10, n_batch=-1):
+def indexing_tensor(spatial_features, k=10, n_batch=-1):
 
     shape_spatial_features = spatial_features.get_shape().as_list()
     n_batch = shape_spatial_features[0]
@@ -69,7 +69,7 @@ def indexing_tensor_2(spatial_features, k=10, n_batch=-1):
     # Neighbor matrix should be int as it should be used for indexing
     assert spatial_features.dtype == tf.float64 or spatial_features.dtype == tf.float32
 
-    neighbor_matrix, distance_matrix = nearest_neighbor_matrix_2(spatial_features, k)
+    neighbor_matrix, distance_matrix = nearest_neighbor_matrix(spatial_features, k)
 
     batch_range = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.range(0, n_batch), axis=1),axis=1), axis=1)
     batch_range = tf.tile(batch_range, [1,n_max_entries,k,1])
@@ -136,12 +136,12 @@ def apply_edges(vertices, edges, reduce_sum=True, flatten=True,expand_first_vert
 ### 
 ### 
 
-def sparse_conv_hidden_aggregators(vertices_in,
-                                   n_aggregators,
-                                   n_filters,
-                                   n_propagate,
-                                   plus_mean=True
-                                   ):   
+def layer_GarNet(vertices_in,
+                 n_aggregators,
+                 n_filters,
+                 n_propagate,
+                 plus_mean=True
+                 ):
     
     vertices_in_orig = vertices_in
     vertices_in = tf.layers.dense(vertices_in,n_propagate,activation=None)
@@ -170,11 +170,11 @@ def sparse_conv_hidden_aggregators(vertices_in,
     return merged_out
     
     
-def sparse_conv_multi_neighbours(vertices_in,
-                                   n_neighbours,
-                                   n_dimensions,
-                                   n_filters,
-                                   n_propagate):
+def layer_GravNet(vertices_in,
+                  n_neighbours,
+                  n_dimensions,
+                  n_filters,
+                  n_propagate):
     
     
     
@@ -193,14 +193,14 @@ def sparse_conv_multi_neighbours(vertices_in,
         collapsed = tf.concat([collapsed,collapsed_mean],axis=-1)
         return collapsed
     
-    indexing, distance = indexing_tensor_2(neighb_dimensions, n_neighbours)
+    indexing, distance = indexing_tensor(neighb_dimensions, n_neighbours)
     collapsed = collapse_to_vertex(indexing,distance,vertices_prop)
     updated_vertices = tf.concat([vertices_in,collapsed],axis=-1)
 
     return high_dim_dense(updated_vertices,n_filters,activation=tf.nn.tanh)
 
 
-def sparse_conv_global_exchange(vertices_in):
+def layer_global_exchange(vertices_in):
     trans_vertices_in = vertices_in
 
     global_summed = tf.reduce_mean(trans_vertices_in, axis=1, keepdims=True)

@@ -7,16 +7,16 @@ def get_GravNet_model_for_clustering(input, training, momentum):
     feats = []
     x = input
     for i in range(4):
-        x = sparse_conv_global_exchange(x)
+        x = layer_global_exchange(x)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
 
-        x = sparse_conv_multi_neighbours(x,
-                                     n_neighbours=40,
-                                     n_dimensions=4,
-                                     n_filters=42,
-                                     n_propagate=18)
+        x = layer_GravNet(x,
+                          n_neighbours=40,
+                          n_dimensions=4,
+                          n_filters=42,
+                          n_propagate=18)
         x = tf.layers.batch_normalization(x, momentum=momentum, training=training)
         feats.append(x)
 
@@ -31,16 +31,16 @@ def get_GarNet_model_for_clustering(input, training, momentum):
     propagate = 11 * [20]
     pre_filters = 11 * [[]]
 
-    feat = sparse_conv_global_exchange(input)
+    feat = layer_global_exchange(input)
     feat = tf.layers.batch_normalization(feat, training=training, momentum=momentum)
     feat = high_dim_dense(feat, 32, activation=tf.nn.tanh)
     feat_list = []
     for i in range(len(filters)):
-        feat = sparse_conv_hidden_aggregators(feat,
-                                                   aggregators[i],
-                                                   n_filters=filters[i],
-                                                   n_propagate=propagate[i]
-                                                   )
+        feat = layer_GarNet(feat,
+                            aggregators[i],
+                            n_filters=filters[i],
+                            n_propagate=propagate[i]
+                            )
         feat = tf.layers.batch_normalization(feat, training=training, momentum=momentum)
         feat_list.append(feat)
         # feat = tf.layers.dropout(feat, rate=0.0005, training=self.is_train)
@@ -69,11 +69,11 @@ def get_GravNet_model_for_classification(input, num_classes, training, momentum)
         (4, 32, 64)
     ]
     for nsen, nneigh, filt in nsensors:
-        x = sparse_conv_global_exchange(x)
+        x = layer_global_exchange(x)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
         x = high_dim_dense(x, 64, activation=tf.nn.tanh)
-        x = sparse_conv_multi_neighbours(x, nneigh, dimensions, filt, propagate)
+        x = layer_GravNet(x, nneigh, dimensions, filt, propagate)
         x = tf.layers.batch_normalization(x, momentum=momentum, training=training)
         x = max_pool_on_last_dimensions(x, nsen)
 
