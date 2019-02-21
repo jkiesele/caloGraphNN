@@ -3,7 +3,7 @@ from caloGraphNN import *
 
 
 
-def get_gravity_model_for_clustering(input, training, momentum):
+def get_GravNet_model_for_clustering(input, training, momentum):
     feats = []
     x = input
     for i in range(4):
@@ -25,7 +25,7 @@ def get_gravity_model_for_clustering(input, training, momentum):
     x = high_dim_dense(x, 3, activation=tf.nn.relu)
     return x
 
-def get_garnet_model_for_clustering(input, training, momentum):
+def get_GarNet_model_for_clustering(input, training, momentum):
     aggregators = 11 * [4]
     filters = 11 * [32]
     propagate = 11 * [20]
@@ -52,7 +52,7 @@ def get_garnet_model_for_clustering(input, training, momentum):
     return feat
 
 
-def get_gravity_model_for_classification(input, num_classes, training, momentum):
+def get_GravNet_model_for_classification(input, num_classes, training, momentum):
     x = input
 
     propagate = 18
