@@ -29,7 +29,6 @@ def get_GarNet_model_for_clustering(input, training, momentum):
     aggregators = 11 * [4]
     filters = 11 * [32]
     propagate = 11 * [20]
-    pre_filters = 11 * [[]]
 
     feat = layer_global_exchange(input)
     feat = tf.layers.batch_normalization(feat, training=training, momentum=momentum)
@@ -50,6 +49,3 @@ def get_GarNet_model_for_clustering(input, training, momentum):
     feat = tf.layers.dense(feat, 3, activation=tf.nn.relu)
 
     return feat
-
-
-
