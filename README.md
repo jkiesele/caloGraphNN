@@ -1,6 +1,6 @@
 # caloGraphNN
 
-Repository that contains minimal implementations of the graph neural network layers discussed in [arxiv:xxxx].
+Repository that contains minimal implementations of the graph neural network layers discussed in [arxiv:1902.07987].
 All necessary functions are included in the individual python files. The layers can be used analogously to tensorflow layers. 
 Keras wrappers will follow.
 The bare layers can be found in caloGraphNN.py, and can be used in a similar way as bare tensorflow layers, and therefore can be easily implemented in custom DNN architectures.
