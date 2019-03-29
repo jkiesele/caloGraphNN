@@ -48,7 +48,7 @@ class GravNet(keras.layers.Layer):
         features = self.input_feature_transform(x)
         coordinates = self.input_spatial_transform(x)
 
-        collected_neighbours = self.collect_neighbours(coordinates, features)
+        collected_neighbours = self.collect_neighbours_range(coordinates, features)
 
         updated_features = tf.concat([x, collected_neighbours], axis=-1)
 
@@ -67,7 +67,7 @@ class GravNet(keras.layers.Layer):
         distance_matrix = euclidean_squared(coordinates, coordinates)
         _, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
 
-        neighbour_indices = ranked_indices[:,:,1:]
+        neighbour_indices = ranked_indices[:, :, 1:]
     
         n_vertices = features.shape[1]
         n_features = features.shape[2]
@@ -76,16 +76,60 @@ class GravNet(keras.layers.Layer):
         neighbour_mask = tf.one_hot(neighbour_indices, depth=n_vertices, axis=-1, dtype=tf.int32)
         neighbour_mask = tf.reduce_sum(neighbour_mask, axis=2)
         neighbour_mask = tf.cast(neighbour_mask, tf.bool)
-    
+
         # (B, V, F) -[tile]> (B, V, V, F) -[mask]> (B, V, N-1, F)
         neighbour_features = tf.expand_dims(features, axis=1)
         neighbour_features = tf.tile(neighbour_features, [1, n_vertices, 1, 1])
         neighbour_features = tf.boolean_mask(neighbour_features, neighbour_mask)
         neighbour_features = tf.reshape(neighbour_features, [-1, n_vertices, self.n_neighbours - 1, n_features])
-    
+
         # (B, V, V) -[mask]> (B, V, N-1)
         distance = tf.boolean_mask(distance_matrix, neighbour_mask)
         distance = tf.reshape(distance, [-1, n_vertices, self.n_neighbours - 1])
+    
+        weights = gauss_of_lin(distance * 10.)
+        weights = tf.expand_dims(weights, axis=-1)
+    
+        # weight the neighbour_features
+        neighbour_features *= weights
+    
+        neighbours_max = tf.reduce_max(neighbour_features, axis=2)
+        neighbours_mean = tf.reduce_mean(neighbour_features, axis=2)
+    
+        return tf.concat([neighbours_max, neighbours_mean], axis=-1)
+
+    def collect_neighbours_range(self, coordinates, features):
+        # Version using tf.range
+        # V = number of vertices
+        # N = number of neighbours
+        # F = number of features per vertex
+    
+        # distance_matrix is the actual (B, V, V) matrix
+        distance_matrix = euclidean_squared(coordinates, coordinates)
+        ranked_distances, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
+
+        neighbour_indices = ranked_indices[:, :, 1:]
+
+        n_batches = features.shape[0]
+        #print('n_batches', type(n_batches), n_batches)
+        #if type(n_batches) is not int or n_batches <= 0:
+        #    n_batches = 1
+
+        n_vertices = features.shape[1]
+        n_features = features.shape[2]
+
+        batch_range = tf.range(0, n_batches)
+        batch_range = tf.expand_dims(batch_range, axis=1)
+        batch_range = tf.expand_dims(batch_range, axis=1)
+        batch_range = tf.expand_dims(batch_range, axis=1) # (B, 1, 1, 1)
+
+        batch_indices = tf.tile(batch_range, [1, n_vertices, self.n_neighbours - 1, 1]) # (B, V, N-1, 1)
+        vertex_indices = tf.expand_dims(neighbour_indices, axis=3) # (B, V, N-1, 1)
+        indices = tf.concat([batch_indices, vertex_indices], axis=-1)
+    
+        neighbour_features = tf.gather_nd(features, indices) # (B, V, N-1, F)
+    
+        distance = ranked_distances[:, :, 1:]
     
         weights = gauss_of_lin(distance * 10.)
         weights = tf.expand_dims(weights, axis=-1)

@@ -1,16 +1,13 @@
+import sys
+import traceback
 import keras
 from caloGraphNN_keras import *
 
 class GravNetClusteringModel(keras.Model):
-    def __init__(self, **kwargs):
+    def __init__(self, n_neighbours=40, n_dimensions=4, n_filters=42, n_propagate=18, **kwargs):
         super(GravNetClusteringModel, self).__init__(**kwargs)
 
         self.blocks = []
-
-        n_neighbours = 40
-        n_dimensions = 4
-        n_filters = 42
-        n_propagate = 18
 
         momentum = kwargs.get('momentum', 0.99)
 
@@ -30,6 +27,10 @@ class GravNetClusteringModel(keras.Model):
         self.output_dense_0 = self.add_layer(keras.layers.Dense, 128, activation='relu', name='output_0')
         self.output_dense_1 = self.add_layer(keras.layers.Dense, 3, activation='relu', name='output_1')
 
+        # temporary reshaping to (batch, n_vert) while debugging
+        self.tmp_dense = self.add_layer(keras.layers.Dense, 1, activation=None, name='tmp_dense')
+        self.tmp_reshape = self.add_layer(keras.layers.Reshape, (4,))
+
     def call(self, inputs):
         feats = []
 
@@ -46,6 +47,10 @@ class GravNetClusteringModel(keras.Model):
         x = self.output_dense_0(x)
         x = self.output_dense_1(x)
 
+        # temporary reshaping to (batch, n_vert) while debugging
+        x = self.tmp_dense(x)
+        x = self.tmp_reshape(x)
+
         return x
 
     def add_layer(self, cls, *args, **kwargs):
@@ -55,14 +60,10 @@ class GravNetClusteringModel(keras.Model):
 
 
 class GarNetClusteringModel(keras.Model):
-    def __init__(self, **kwargs):
+    def __init__(self, aggregators=([4] * 11), filters=([32] * 11), propagate=([20] * 11), **kwargs):
         super(GarNetClusteringModel, self).__init__(**kwargs)
         
         self.blocks = []
-
-        aggregators = 11 * [4]
-        filters = 11 * [32]
-        propagate = 11 * [20]
 
         block_params = zip(aggregators, filters, propagate)
 
