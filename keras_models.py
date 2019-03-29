@@ -27,10 +27,6 @@ class GravNetClusteringModel(keras.Model):
         self.output_dense_0 = self.add_layer(keras.layers.Dense, 128, activation='relu', name='output_0')
         self.output_dense_1 = self.add_layer(keras.layers.Dense, 3, activation='relu', name='output_1')
 
-        # temporary reshaping to (batch, n_vert) while debugging
-        self.tmp_dense = self.add_layer(keras.layers.Dense, 1, activation=None, name='tmp_dense')
-        self.tmp_reshape = self.add_layer(keras.layers.Reshape, (4,))
-
     def call(self, inputs):
         feats = []
 
@@ -46,10 +42,6 @@ class GravNetClusteringModel(keras.Model):
 
         x = self.output_dense_0(x)
         x = self.output_dense_1(x)
-
-        # temporary reshaping to (batch, n_vert) while debugging
-        x = self.tmp_dense(x)
-        x = self.tmp_reshape(x)
 
         return x
 

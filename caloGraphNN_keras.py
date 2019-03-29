@@ -48,10 +48,7 @@ class GravNet(keras.layers.Layer):
         features = self.input_feature_transform(x)
         coordinates = self.input_spatial_transform(x)
 
-        # Using tf.range(..)
-        collected_neighbours = self.collect_neighbours_range(coordinates, features)
-        # Using boolean mask
-        #collected_neighbours = self.collect_neighbours(coordinates, features)
+        collected_neighbours = self.collect_neighbours(coordinates, features)
 
         updated_features = tf.concat([x, collected_neighbours], axis=-1)
 
@@ -60,7 +57,7 @@ class GravNet(keras.layers.Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0], input_shape[1], self.output_feature_transform.units)
 
-    def collect_neighbours(self, coordinates, features):
+    def collect_neighbours_fullmatrix(self, coordinates, features):
         # implementation changed wrt caloGraphNN to account for batch size (B) being unknown (None)
         # V = number of vertices
         # N = number of neighbours
@@ -72,8 +69,8 @@ class GravNet(keras.layers.Layer):
 
         neighbour_indices = ranked_indices[:, :, 1:]
     
-        n_vertices = features.shape[1]
-        n_features = features.shape[2]
+        n_vertices = tf.shape(features)[1]
+        n_features = tf.shape(features)[2]
     
         # make a boolean mask of the neighbours (B, V, N-1)
         neighbour_mask = tf.one_hot(neighbour_indices, depth=n_vertices, axis=-1, dtype=tf.int32)
@@ -101,25 +98,19 @@ class GravNet(keras.layers.Layer):
     
         return tf.concat([neighbours_max, neighbours_mean], axis=-1)
 
-    def collect_neighbours_range(self, coordinates, features):
-        # Version using tf.range
+    def collect_neighbours(self, coordinates, features):
         # V = number of vertices
         # N = number of neighbours
         # F = number of features per vertex
     
-        # distance_matrix is the actual (B, V, V) matrix
         distance_matrix = euclidean_squared(coordinates, coordinates)
         ranked_distances, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
 
         neighbour_indices = ranked_indices[:, :, 1:]
 
-        n_batches = features.shape[0]
-        #print('n_batches', type(n_batches), n_batches)
-        #if type(n_batches) is not int or n_batches <= 0:
-        #    n_batches = 1
-
-        n_vertices = features.shape[1]
-        n_features = features.shape[2]
+        n_batches = tf.shape(features)[0]
+        n_vertices = tf.shape(features)[1]
+        n_features = tf.shape(features)[2]
 
         batch_range = tf.range(0, n_batches)
         batch_range = tf.expand_dims(batch_range, axis=1)
