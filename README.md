@@ -17,8 +17,8 @@ When using these layers to build models or modifying them, please cite our paper
   journal   = {XX},
   volume    = {abs/xxx},
   year      = {2019},
-  url       = {http://arxiv.org/xxx},
+  url       = {https://arxiv.org/abs/1902.07987},
   archivePrefix = {arXiv},
-  eprint    = {xxx},
+  eprint    = {1902.07987},
 }
 ```
