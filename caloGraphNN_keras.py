@@ -48,7 +48,10 @@ class GravNet(keras.layers.Layer):
         features = self.input_feature_transform(x)
         coordinates = self.input_spatial_transform(x)
 
+        # Using tf.range(..)
         collected_neighbours = self.collect_neighbours_range(coordinates, features)
+        # Using boolean mask
+        #collected_neighbours = self.collect_neighbours(coordinates, features)
 
         updated_features = tf.concat([x, collected_neighbours], axis=-1)
 
