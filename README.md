@@ -14,7 +14,7 @@ When using these layers to build models or modifying them, please cite our paper
 @article{caloGraphNN,
   author    = {Qasim, Shah Rukh and Kieseler, Jan and Iiyama, Yutaro and Pierini, Maurizio},
   title     = {Learning representations of irregular particle-detector geometry with distance-weighted graph networks},
-  journal   = {XX},
+  journal   = {Submitted to EPJC},
   volume    = {abs/xxx},
   year      = {2019},
   url       = {https://arxiv.org/abs/1902.07987},
