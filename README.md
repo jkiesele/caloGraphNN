@@ -6,7 +6,9 @@ Keras wrappers will follow.
 The bare layers can be found in caloGraphNN.py, and can be used in a similar way as bare tensorflow layers, and therefore can be easily implemented in custom DNN architectures.
 The source code for models described in the paper is in tensorflow_models.py for reference.
 
-The tensorflow version needs to be at least 1.8.
+The keras implementation of the layers and models can be found in the files: caloGraphNN_keras.py, keras_models.py.
+
+Both implementations require at least tensorflow 1.8.
 
 When using these layers to build models or modifying them, please cite our paper:
 
@@ -15,7 +17,7 @@ When using these layers to build models or modifying them, please cite our paper
   author    = {Qasim, Shah Rukh and Kieseler, Jan and Iiyama, Yutaro and Pierini, Maurizio},
   title     = {Learning representations of irregular particle-detector geometry with distance-weighted graph networks},
   journal   = {Submitted to EPJC},
-  volume    = {abs/xxx},
+  volume    = {abs/1902.07987},
   year      = {2019},
   url       = {https://arxiv.org/abs/1902.07987},
   archivePrefix = {arXiv},
