@@ -26,7 +26,10 @@ class GravNet(keras.layers.Layer):
         super(GravNet, self).__init__(**kwargs)
 
         self.n_neighbours = n_neighbours
-
+        self.n_dimensions = n_dimensions
+        self.n_filters = n_filters
+        self.n_propagate = n_propagate
+        
         self.input_feature_transform = keras.layers.Dense(n_propagate)
         self.input_spatial_transform = keras.layers.Dense(n_dimensions)
         self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh')
@@ -136,10 +139,18 @@ class GravNet(keras.layers.Layer):
     
         return tf.concat([neighbours_max, neighbours_mean], axis=-1)
 
+    def get_config(self):
+            config = {'n_neighbours': self.n_neighbours, 'n_dimensions': self.n_dimensions, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate}
+            base_config = super(GravNet, self).get_config()
+            return dict(list(base_config.items()) + list(config.items()))
 
 class GarNet(keras.layers.Layer):
     def __init__(self, n_aggregators, n_filters, n_propagate, **kwargs):
         super(GarNet, self).__init__(**kwargs)
+
+        self.n_aggregators = n_aggregators
+        self.n_filters = n_filters
+        self.n_propagate = n_propagate
 
         self.input_feature_transform = keras.layers.Dense(n_propagate)
         self.aggregator_distance = keras.layers.Dense(n_aggregators)
@@ -196,10 +207,14 @@ class GarNet(keras.layers.Layer):
         
         return tf.reshape(out, [-1, out.shape[1].value, n]) # (B, u, n)
     
+    def get_config(self):
+            config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate}
+            base_config = super(GarNet, self).get_config()
+            return dict(list(base_config.items()) + list(config.items()))
     
     
     
-class weighted_sum_layer(Layer):
+class weighted_sum_layer(keras.layers.Layer):
     def __init__(self, **kwargs):
         super(weighted_sum_layer, self).__init__(**kwargs)
         
