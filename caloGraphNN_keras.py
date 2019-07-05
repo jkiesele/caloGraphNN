@@ -4,8 +4,10 @@ import keras
 from caloGraphNN import euclidean_squared, gauss, gauss_of_lin
 
 class GlobalExchange(keras.layers.Layer):
-    def __init__(self, **kwargs):
+    def __init__(self, vertex_mask=None, **kwargs):
         super(GlobalExchange, self).__init__(**kwargs)
+
+        self.vertex_mask = vertex_mask
 
     def build(self, input_shape):
         # input_shape = (None, V, F)
@@ -15,6 +17,9 @@ class GlobalExchange(keras.layers.Layer):
     def call(self, x):
         mean = tf.reduce_mean(x, axis=1, keepdims=True)
         mean = tf.tile(mean, [1, self.num_vertices, 1])
+        if self.vertex_mask is not None:
+            mean = self.vertex_mask * mean
+
         return tf.concat([x, mean], axis=-1)
 
     def compute_output_shape(self, input_shape):
@@ -107,6 +112,7 @@ class GravNet(keras.layers.Layer):
         # F = number of features per vertex
     
         distance_matrix = euclidean_squared(coordinates, coordinates)
+
         ranked_distances, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
 
         neighbour_indices = ranked_indices[:, :, 1:]
@@ -145,12 +151,14 @@ class GravNet(keras.layers.Layer):
             return dict(list(base_config.items()) + list(config.items()))
 
 class GarNet(keras.layers.Layer):
-    def __init__(self, n_aggregators, n_filters, n_propagate, **kwargs):
+    def __init__(self, n_aggregators, n_filters, n_propagate, vertex_mask=None, **kwargs):
         super(GarNet, self).__init__(**kwargs)
 
         self.n_aggregators = n_aggregators
         self.n_filters = n_filters
         self.n_propagate = n_propagate
+
+        self.vertex_mask = vertex_mask
 
         self.input_feature_transform = keras.layers.Dense(n_propagate)
         self.aggregator_distance = keras.layers.Dense(n_aggregators)
@@ -176,6 +184,10 @@ class GarNet(keras.layers.Layer):
         edge_weights = gauss(distance)
 
         features = tf.concat([features, edge_weights], axis=-1) # (B, V, F+S)
+
+        if self.vertex_mask is not None:
+            features = self.vertex_mask * features
+            edge_weights = self.vertex_mask * edge_weights
 
         # vertices -> aggregators
         edge_weights_trans = tf.transpose(edge_weights, perm=(0, 2, 1)) # (B, S, V)
