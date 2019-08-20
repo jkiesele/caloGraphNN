@@ -1,10 +1,8 @@
 import tensorflow as tf
 import keras
+import keras.backend as K
 
 from caloGraphNN import euclidean_squared, gauss, gauss_of_lin
-
-from keras.layers import Layer
-import keras.backend as K
 
 class CreateZeroMask(Layer):
 '''
@@ -52,7 +50,13 @@ class GlobalExchange(keras.layers.Layer):
 
 class GravNet(keras.layers.Layer):
     def __init__(self, n_neighbours, n_dimensions, n_filters, n_propagate, name, 
-                 also_coordinates=False, feature_dropout=-1, **kwargs):
+                 also_coordinates=False, feature_dropout=-1, 
+                 coordinate_kernel_initializer=keras.initializers.Orthogonal(),
+                 other_kernel_initializer='glorot_uniform',
+                 fix_coordinate_space=False, 
+                 coordinate_activation=None,
+                 masked_coordinate_offset=None,
+                 **kwargs):
         super(GravNet, self).__init__(**kwargs)
 
         self.n_neighbours = n_neighbours
@@ -62,16 +66,26 @@ class GravNet(keras.layers.Layer):
         self.name = name
         self.also_coordinates = also_coordinates
         self.feature_dropout = feature_dropout
+        self.masked_coordinate_offset = masked_coordinate_offset
         
-        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR')
-        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S')
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout')
+        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
+        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
+        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
 
         self._sublayers = [self.input_feature_transform, self.input_spatial_transform, self.output_feature_transform]
+        if fix_coordinate_space:
+            self.input_spatial_transform = None
+            self._sublayers = [self.input_feature_transform, self.output_feature_transform]
+        
+        
 
     def build(self, input_shape):
+        if self.masked_coordinate_offset is not None:
+            input_shape = input_shape[0]
+            
         self.input_feature_transform.build(input_shape)
-        self.input_spatial_transform.build(input_shape)
+        if self.input_spatial_transform is not None:
+            self.input_spatial_transform.build(input_shape)
         
         # tf.ragged FIXME?
         self.output_feature_transform.build((input_shape[0], input_shape[1], input_shape[2] + self.input_feature_transform.units * 2))
@@ -83,21 +97,43 @@ class GravNet(keras.layers.Layer):
         super(GravNet, self).build(input_shape)
 
     def call(self, x):
+        
+        if self.masked_coordinate_offset is not None:
+            if not isinstance(x, list):
+                raise Exception('GravNet: in mask mode, input must be list of input,mask')
+            mask = x[1]
+            x = x[0]
+            
         features = self.input_feature_transform(x)
+        
         if self.feature_dropout>0 and self.feature_dropout < 1:
             features = keras.layers.Dropout(self.feature_dropout)(features)
         
-        coordinates = self.input_spatial_transform(x)
+        if self.input_spatial_transform is not None:
+            coordinates = self.input_spatial_transform(x)
+        else:
+            coordinates = x[:,:,0:self.n_dimensions]
+            
+        if self.masked_coordinate_offset is not None:
+            sel_mask = tf.tile(mask, [1,1,tf.shape(coordinates)[2]])
+            coordinates = tf.where(sel_mask>0., coordinates, tf.zeros_like(coordinates)-self.masked_coordinate_offset)
 
         collected_neighbours = self.collect_neighbours(coordinates, features)
 
         updated_features = tf.concat([x, collected_neighbours], axis=-1)
+        output = self.output_feature_transform(updated_features)
+        
+        if self.masked_coordinate_offset is not None:
+            output *= mask
 
         if self.also_coordinates:
-            return [self.output_feature_transform(updated_features), coordinates]
-        return self.output_feature_transform(updated_features)
+            return [output, coordinates]
+        return output
+        
 
     def compute_output_shape(self, input_shape):
+        if self.masked_coordinate_offset is not None:
+            input_shape = input_shape[0]
         if self.also_coordinates:
             return [(input_shape[0], input_shape[1], self.output_feature_transform.units),
                     (input_shape[0], input_shape[1], self.n_dimensions)]
@@ -152,7 +188,8 @@ class GravNet(keras.layers.Layer):
                       'n_propagate': self.n_propagate,
                       'name':self.name,
                       'also_coordinates': self.also_coordinates,
-                      'feature_dropout' : self.feature_dropout}
+                      'feature_dropout' : self.feature_dropout,
+                      'masked_coordinate_offset'       : self.masked_coordinate_offset}
             base_config = super(GravNet, self).get_config()
             return dict(list(base_config.items()) + list(config.items()))
 
