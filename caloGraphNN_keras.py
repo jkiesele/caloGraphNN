@@ -5,10 +5,10 @@ import keras.backend as K
 from caloGraphNN import euclidean_squared, gauss, gauss_of_lin
 
 class CreateZeroMask(Layer):
-'''
-Creates a mask based on the 0th index of the vertex
-To apply, use keras.Layers.Multiply
-'''
+    '''
+    Creates a mask based on the 0th index of the vertex
+    To apply, use keras.Layers.Multiply
+    '''
     def __init__(self, **kwargs):
         super(CreateZeroMask, self).__init__(**kwargs)
     
@@ -81,8 +81,6 @@ class GravNet(keras.layers.Layer):
         if fix_coordinate_space:
             self.input_spatial_transform = None
             self._sublayers = [self.input_feature_transform, self.output_feature_transform]
-        
-        
 
     def build(self, input_shape):
         if self.masked_coordinate_offset is not None:
@@ -135,7 +133,6 @@ class GravNet(keras.layers.Layer):
             return [output, coordinates]
         return output
         
-
     def compute_output_shape(self, input_shape):
         if self.masked_coordinate_offset is not None:
             input_shape = input_shape[0]
@@ -188,22 +185,21 @@ class GravNet(keras.layers.Layer):
         return tf.concat([neighbours_max, neighbours_mean], axis=-1)
 
     def get_config(self):
-            config = {'n_neighbours': self.n_neighbours, 
-                      'n_dimensions': self.n_dimensions, 
-                      'n_filters': self.n_filters, 
-                      'n_propagate': self.n_propagate,
-                      'name':self.name,
-                      'also_coordinates': self.also_coordinates,
-                      'feature_dropout' : self.feature_dropout,
-                      'masked_coordinate_offset'       : self.masked_coordinate_offset}
-            base_config = super(GravNet, self).get_config()
-            return dict(list(base_config.items()) + list(config.items()))
-
+        config = {'n_neighbours': self.n_neighbours, 
+                  'n_dimensions': self.n_dimensions, 
+                  'n_filters': self.n_filters, 
+                  'n_propagate': self.n_propagate,
+                  'name':self.name,
+                  'also_coordinates': self.also_coordinates,
+                  'feature_dropout' : self.feature_dropout,
+                  'masked_coordinate_offset'       : self.masked_coordinate_offset}
+        base_config = super(GravNet, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 
 class GarNet(keras.layers.Layer):
-    def __init__(self, n_aggregators, n_filters, n_propagate, vertex_mask=None, **kwargs):
+    def __init__(self, n_aggregators, n_filters, n_propagate, name, vertex_mask=None, **kwargs):
         super(GarNet, self).__init__(**kwargs)
 
         self.n_aggregators = n_aggregators
@@ -278,12 +274,12 @@ class GarNet(keras.layers.Layer):
         return tf.reshape(out, [-1, out.shape[1].value, n]) # (B, u, n)
     
     def get_config(self):
-            config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate, 'name': self.name}
-            base_config = super(GarNet, self).get_config()
-            return dict(list(base_config.items()) + list(config.items()))
+        config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate, 'name': self.name}
+        base_config = super(GarNet, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
     
     
-    # tf.ragged FIXME? the last one should be no problem
+# tf.ragged FIXME? the last one should be no problem
 class weighted_sum_layer(keras.layers.Layer):
     def __init__(self, **kwargs):
         super(weighted_sum_layer, self).__init__(**kwargs)
