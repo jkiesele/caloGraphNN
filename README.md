@@ -13,14 +13,20 @@ Both implementations require at least tensorflow 1.8.
 When using these layers to build models or modifying them, please cite our paper:
 
 ```
-@article{caloGraphNN,
-  author    = {Qasim, Shah Rukh and Kieseler, Jan and Iiyama, Yutaro and Pierini, Maurizio},
-  title     = {Learning representations of irregular particle-detector geometry with distance-weighted graph networks},
-  journal   = {Submitted to EPJC},
-  volume    = {abs/1902.07987},
-  year      = {2019},
-  url       = {https://arxiv.org/abs/1902.07987},
-  archivePrefix = {arXiv},
-  eprint    = {1902.07987},
+@article{Qasim:2019otl,
+      author         = "Qasim, Shah Rukh and Kieseler, Jan and Iiyama, Yutaro and
+                        Pierini, Maurizio",
+      title          = "{Learning representations of irregular particle-detector
+                        geometry with distance-weighted graph networks}",
+      journal        = "Eur. Phys. J.",
+      volume         = "C79",
+      year           = "2019",
+      number         = "7",
+      pages          = "608",
+      doi            = "10.1140/epjc/s10052-019-7113-9",
+      eprint         = "1902.07987",
+      archivePrefix  = "arXiv",
+      primaryClass   = "physics.data-an",
+      SLACcitation   = "%%CITATION = ARXIV:1902.07987;%%"
 }
 ```

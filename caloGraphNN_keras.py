@@ -1,7 +1,32 @@
 import tensorflow as tf
 import keras
+import keras.backend as K
 
 from caloGraphNN import euclidean_squared, gauss, gauss_of_lin
+
+class CreateZeroMask(Layer):
+'''
+Creates a mask based on the 0th index of the vertex
+To apply, use keras.Layers.Multiply
+'''
+    def __init__(self, **kwargs):
+        super(CreateZeroMask, self).__init__(**kwargs)
+    
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0],input_shape[1],1)
+    
+    def call(self, inputs):
+        zeros = tf.zeros(shape=tf.shape(inputs)[:-1])
+        mask = tf.where(inputs[:,:,0]>0, zeros+1., zeros)
+        mask = tf.expand_dims(mask,axis=2)
+        return mask
+    
+    def get_config(self):
+        #config = {'my_configoption': self.my_configoption}
+        base_config = super(CreateZeroMask, self).get_config()
+        return dict(list(base_config.items())) # + list(config.items() ))
+      
+
 
 class GlobalExchange(keras.layers.Layer):
     def __init__(self, vertex_mask=None, **kwargs):
@@ -10,12 +35,14 @@ class GlobalExchange(keras.layers.Layer):
         self.vertex_mask = vertex_mask
 
     def build(self, input_shape):
-        # input_shape = (None, V, F)
+        # tf.ragged FIXME?
         self.num_vertices = input_shape[1]
         super(GlobalExchange, self).build(input_shape)
 
     def call(self, x):
         mean = tf.reduce_mean(x, axis=1, keepdims=True)
+        # tf.ragged FIXME?
+        # maybe just use tf.shape(x)[1] instead?
         mean = tf.tile(mean, [1, self.num_vertices, 1])
         if self.vertex_mask is not None:
             mean = self.vertex_mask * mean
@@ -27,23 +54,45 @@ class GlobalExchange(keras.layers.Layer):
 
 
 class GravNet(keras.layers.Layer):
-    def __init__(self, n_neighbours, n_dimensions, n_filters, n_propagate, **kwargs):
+    def __init__(self, n_neighbours, n_dimensions, n_filters, n_propagate, name, 
+                 also_coordinates=False, feature_dropout=-1, 
+                 coordinate_kernel_initializer=keras.initializers.Orthogonal(),
+                 other_kernel_initializer='glorot_uniform',
+                 fix_coordinate_space=False, 
+                 coordinate_activation=None,
+                 masked_coordinate_offset=None,
+                 **kwargs):
         super(GravNet, self).__init__(**kwargs)
 
         self.n_neighbours = n_neighbours
         self.n_dimensions = n_dimensions
         self.n_filters = n_filters
         self.n_propagate = n_propagate
+        self.name = name
+        self.also_coordinates = also_coordinates
+        self.feature_dropout = feature_dropout
+        self.masked_coordinate_offset = masked_coordinate_offset
         
-        self.input_feature_transform = keras.layers.Dense(n_propagate)
-        self.input_spatial_transform = keras.layers.Dense(n_dimensions)
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh')
+        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
+        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
+        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
 
         self._sublayers = [self.input_feature_transform, self.input_spatial_transform, self.output_feature_transform]
+        if fix_coordinate_space:
+            self.input_spatial_transform = None
+            self._sublayers = [self.input_feature_transform, self.output_feature_transform]
+        
+        
 
     def build(self, input_shape):
+        if self.masked_coordinate_offset is not None:
+            input_shape = input_shape[0]
+            
         self.input_feature_transform.build(input_shape)
-        self.input_spatial_transform.build(input_shape)
+        if self.input_spatial_transform is not None:
+            self.input_spatial_transform.build(input_shape)
+        
+        # tf.ragged FIXME?
         self.output_feature_transform.build((input_shape[0], input_shape[1], input_shape[2] + self.input_feature_transform.units * 2))
 
         for layer in self._sublayers:
@@ -53,64 +102,54 @@ class GravNet(keras.layers.Layer):
         super(GravNet, self).build(input_shape)
 
     def call(self, x):
+        
+        if self.masked_coordinate_offset is not None:
+            if not isinstance(x, list):
+                raise Exception('GravNet: in mask mode, input must be list of input,mask')
+            mask = x[1]
+            x = x[0]
+            
         features = self.input_feature_transform(x)
-        coordinates = self.input_spatial_transform(x)
+        
+        if self.feature_dropout>0 and self.feature_dropout < 1:
+            features = keras.layers.Dropout(self.feature_dropout)(features)
+        
+        if self.input_spatial_transform is not None:
+            coordinates = self.input_spatial_transform(x)
+        else:
+            coordinates = x[:,:,0:self.n_dimensions]
+            
+        if self.masked_coordinate_offset is not None:
+            sel_mask = tf.tile(mask, [1,1,tf.shape(coordinates)[2]])
+            coordinates = tf.where(sel_mask>0., coordinates, tf.zeros_like(coordinates)-self.masked_coordinate_offset)
 
         collected_neighbours = self.collect_neighbours(coordinates, features)
 
         updated_features = tf.concat([x, collected_neighbours], axis=-1)
+        output = self.output_feature_transform(updated_features)
+        
+        if self.masked_coordinate_offset is not None:
+            output *= mask
 
-        return self.output_feature_transform(updated_features)
+        if self.also_coordinates:
+            return [output, coordinates]
+        return output
+        
 
     def compute_output_shape(self, input_shape):
+        if self.masked_coordinate_offset is not None:
+            input_shape = input_shape[0]
+        if self.also_coordinates:
+            return [(input_shape[0], input_shape[1], self.output_feature_transform.units),
+                    (input_shape[0], input_shape[1], self.n_dimensions)]
+        
+        # tf.ragged FIXME? tf.shape() might do the trick already
         return (input_shape[0], input_shape[1], self.output_feature_transform.units)
 
-    def collect_neighbours_fullmatrix(self, coordinates, features):
-        # implementation changed wrt caloGraphNN to account for batch size (B) being unknown (None)
-        # V = number of vertices
-        # N = number of neighbours
-        # F = number of features per vertex
-    
-        # distance_matrix is the actual (B, V, V) matrix
-        distance_matrix = euclidean_squared(coordinates, coordinates)
-        _, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
-
-        neighbour_indices = ranked_indices[:, :, 1:]
-    
-        n_vertices = tf.shape(features)[1]
-        n_features = tf.shape(features)[2]
-    
-        # make a boolean mask of the neighbours (B, V, N-1)
-        neighbour_mask = tf.one_hot(neighbour_indices, depth=n_vertices, axis=-1, dtype=tf.int32)
-        neighbour_mask = tf.reduce_sum(neighbour_mask, axis=2)
-        neighbour_mask = tf.cast(neighbour_mask, tf.bool)
-
-        # (B, V, F) -[tile]> (B, V, V, F) -[mask]> (B, V, N-1, F)
-        neighbour_features = tf.expand_dims(features, axis=1)
-        neighbour_features = tf.tile(neighbour_features, [1, n_vertices, 1, 1])
-        neighbour_features = tf.boolean_mask(neighbour_features, neighbour_mask)
-        neighbour_features = tf.reshape(neighbour_features, [-1, n_vertices, self.n_neighbours - 1, n_features])
-
-        # (B, V, V) -[mask]> (B, V, N-1)
-        distance = tf.boolean_mask(distance_matrix, neighbour_mask)
-        distance = tf.reshape(distance, [-1, n_vertices, self.n_neighbours - 1])
-    
-        weights = gauss_of_lin(distance * 10.)
-        weights = tf.expand_dims(weights, axis=-1)
-    
-        # weight the neighbour_features
-        neighbour_features *= weights
-    
-        neighbours_max = tf.reduce_max(neighbour_features, axis=2)
-        neighbours_mean = tf.reduce_mean(neighbour_features, axis=2)
-    
-        return tf.concat([neighbours_max, neighbours_mean], axis=-1)
-
     def collect_neighbours(self, coordinates, features):
-        # V = number of vertices
-        # N = number of neighbours
-        # F = number of features per vertex
-    
+        
+        # tf.ragged FIXME?
+        # for euclidean_squared see caloGraphNN.py
         distance_matrix = euclidean_squared(coordinates, coordinates)
 
         ranked_distances, ranked_indices = tf.nn.top_k(-distance_matrix, self.n_neighbours)
@@ -118,6 +157,8 @@ class GravNet(keras.layers.Layer):
         neighbour_indices = ranked_indices[:, :, 1:]
 
         n_batches = tf.shape(features)[0]
+        
+        # tf.ragged FIXME? or could that work?
         n_vertices = tf.shape(features)[1]
         n_features = tf.shape(features)[2]
 
@@ -126,13 +167,14 @@ class GravNet(keras.layers.Layer):
         batch_range = tf.expand_dims(batch_range, axis=1)
         batch_range = tf.expand_dims(batch_range, axis=1) # (B, 1, 1, 1)
 
+        # tf.ragged FIXME? n_vertices
         batch_indices = tf.tile(batch_range, [1, n_vertices, self.n_neighbours - 1, 1]) # (B, V, N-1, 1)
         vertex_indices = tf.expand_dims(neighbour_indices, axis=3) # (B, V, N-1, 1)
         indices = tf.concat([batch_indices, vertex_indices], axis=-1)
     
         neighbour_features = tf.gather_nd(features, indices) # (B, V, N-1, F)
     
-        distance = ranked_distances[:, :, 1:]
+        distance = -ranked_distances[:, :, 1:]
     
         weights = gauss_of_lin(distance * 10.)
         weights = tf.expand_dims(weights, axis=-1)
@@ -146,9 +188,19 @@ class GravNet(keras.layers.Layer):
         return tf.concat([neighbours_max, neighbours_mean], axis=-1)
 
     def get_config(self):
-            config = {'n_neighbours': self.n_neighbours, 'n_dimensions': self.n_dimensions, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate}
+            config = {'n_neighbours': self.n_neighbours, 
+                      'n_dimensions': self.n_dimensions, 
+                      'n_filters': self.n_filters, 
+                      'n_propagate': self.n_propagate,
+                      'name':self.name,
+                      'also_coordinates': self.also_coordinates,
+                      'feature_dropout' : self.feature_dropout,
+                      'masked_coordinate_offset'       : self.masked_coordinate_offset}
             base_config = super(GravNet, self).get_config()
             return dict(list(base_config.items()) + list(config.items()))
+
+
+
 
 class GarNet(keras.layers.Layer):
     def __init__(self, n_aggregators, n_filters, n_propagate, vertex_mask=None, **kwargs):
@@ -157,18 +209,21 @@ class GarNet(keras.layers.Layer):
         self.n_aggregators = n_aggregators
         self.n_filters = n_filters
         self.n_propagate = n_propagate
+        self.name = name
 
         self.vertex_mask = vertex_mask
 
-        self.input_feature_transform = keras.layers.Dense(n_propagate)
-        self.aggregator_distance = keras.layers.Dense(n_aggregators)
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh')
+        self.input_feature_transform = keras.layers.Dense(n_propagate, name=name+'_FLR')
+        self.aggregator_distance = keras.layers.Dense(n_aggregators, name=name+'_S')
+        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name=name+'_Fout')
 
         self._sublayers = [self.input_feature_transform, self.aggregator_distance, self.output_feature_transform]
 
     def build(self, input_shape):
         self.input_feature_transform.build(input_shape)
         self.aggregator_distance.build(input_shape)
+        
+        # tf.ragged FIXME? tf.shape()?
         self.output_feature_transform.build((input_shape[0], input_shape[1], input_shape[2] + self.aggregator_distance.units + 2 * self.aggregator_distance.units * (self.input_feature_transform.units + self.aggregator_distance.units)))
 
         for layer in self._sublayers:
@@ -208,24 +263,27 @@ class GarNet(keras.layers.Layer):
 
     def apply_edge_weights(self, features, edge_weights, aggregation=None):
         features = tf.expand_dims(features, axis=1) # (B, 1, v, f)
-        edge_weights = tf.expand_dims(edge_weights, axis=3) # (B, u, v, 1)
+        edge_weights = tf.expand_dims(edge_weights, axis=3) # (B, A, v, 1)
 
+        # tf.ragged FIXME? broadcasting should work
         out = edge_weights * features # (B, u, v, f)
+        # tf.ragged FIXME? these values won't work
         n = features.shape[-2].value * features.shape[-1].value
 
         if aggregation:
             out = aggregation(out, axis=2) # (B, u, f)
             n = features.shape[-1].value
         
+        # tf.ragged FIXME? there might be a chance to spell out batch dim instead and use -1 for vertices?
         return tf.reshape(out, [-1, out.shape[1].value, n]) # (B, u, n)
     
     def get_config(self):
-            config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate}
+            config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate, 'name': self.name}
             base_config = super(GarNet, self).get_config()
             return dict(list(base_config.items()) + list(config.items()))
     
     
-    
+    # tf.ragged FIXME? the last one should be no problem
 class weighted_sum_layer(keras.layers.Layer):
     def __init__(self, **kwargs):
         super(weighted_sum_layer, self).__init__(**kwargs)
