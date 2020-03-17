@@ -1,32 +1,49 @@
-import tensorflow as tf
 import keras
 import keras.backend as K
 
-from caloGraphNN import euclidean_squared, gauss, gauss_of_lin
+# Hack keras Dense to propagate the layer name into saved weights
+from keras.engine.base_layer import InputSpec
 
-class CreateZeroMask(Layer):
+def Dense_build(self, input_shape):
+    assert len(input_shape) >= 2
+    input_dim = input_shape[-1]
+
+    self.kernel = self.add_weight(shape=(input_dim, self.units),
+                                  initializer=self.kernel_initializer,
+                                  name='%s_kernel' % self.name,
+                                  regularizer=self.kernel_regularizer,
+                                  constraint=self.kernel_constraint)
+    if self.use_bias:
+        self.bias = self.add_weight(shape=(self.units,),
+                                    initializer=self.bias_initializer,
+                                    name='%s_bias' % self.name,
+                                    regularizer=self.bias_regularizer,
+                                    constraint=self.bias_constraint)
+    else:
+        self.bias = None
+    self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
+    self.built = True
+
+keras.layers.Dense.build = Dense_build
+
+
+class CreateZeroMask(keras.layers.Layer):
     '''
-    Creates a mask based on the 0th index of the vertex
+    Creates a mask based on the n-th feature of the vertex
     To apply, use keras.Layers.Multiply
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, idx, **kwargs):
         super(CreateZeroMask, self).__init__(**kwargs)
+
+        self.idx = idx
     
     def compute_output_shape(self, input_shape):
-        return (input_shape[0],input_shape[1],1)
+        return (input_shape[0], input_shape[1], 1)
     
     def call(self, inputs):
-        zeros = tf.zeros(shape=tf.shape(inputs)[:-1])
-        mask = tf.where(inputs[:,:,0]>0, zeros+1., zeros)
-        mask = tf.expand_dims(mask,axis=2)
+        mask = K.cast(K.not_equal(inputs[..., self.idx:self.idx + 1], 0.), 'float32')
         return mask
     
-    def get_config(self):
-        #config = {'my_configoption': self.my_configoption}
-        base_config = super(CreateZeroMask, self).get_config()
-        return dict(list(base_config.items())) # + list(config.items() ))
-      
-
 
 class GlobalExchange(keras.layers.Layer):
     def __init__(self, vertex_mask=None, **kwargs):
@@ -40,14 +57,14 @@ class GlobalExchange(keras.layers.Layer):
         super(GlobalExchange, self).build(input_shape)
 
     def call(self, x):
-        mean = tf.reduce_mean(x, axis=1, keepdims=True)
+        mean = K.mean(x, axis=1, keepdims=True)
         # tf.ragged FIXME?
         # maybe just use tf.shape(x)[1] instead?
-        mean = tf.tile(mean, [1, self.num_vertices, 1])
+        mean = K.tile(mean, [1, self.num_vertices, 1])
         if self.vertex_mask is not None:
             mean = self.vertex_mask * mean
 
-        return tf.concat([x, mean], axis=-1)
+        return K.concatenate([x, mean], axis=-1)
 
     def compute_output_shape(self, input_shape):
         return input_shape[:2] + (input_shape[2] * 2,)
@@ -73,9 +90,9 @@ class GravNet(keras.layers.Layer):
         self.feature_dropout = feature_dropout
         self.masked_coordinate_offset = masked_coordinate_offset
         
-        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
-        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
+        self.input_feature_transform = Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
+        self.input_spatial_transform = Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
+        self.output_feature_transform = Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
 
         self._sublayers = [self.input_feature_transform, self.input_spatial_transform, self.output_feature_transform]
         if fix_coordinate_space:
@@ -118,12 +135,12 @@ class GravNet(keras.layers.Layer):
             coordinates = x[:,:,0:self.n_dimensions]
             
         if self.masked_coordinate_offset is not None:
-            sel_mask = tf.tile(mask, [1,1,tf.shape(coordinates)[2]])
-            coordinates = tf.where(sel_mask>0., coordinates, tf.zeros_like(coordinates)-self.masked_coordinate_offset)
+            sel_mask = K.tile(mask, [1, 1, K.shape(coordinates)[2]])
+            coordinates = K.switch(K.greater(sel_mask, 0.), coordinates, K.zeros_like(coordinates) - self.masked_coordinate_offset)
 
         collected_neighbours = self.collect_neighbours(coordinates, features)
 
-        updated_features = tf.concat([x, collected_neighbours], axis=-1)
+        updated_features = K.concatenate([x, collected_neighbours], axis=-1)
         output = self.output_feature_transform(updated_features)
         
         if self.masked_coordinate_offset is not None:
@@ -144,6 +161,8 @@ class GravNet(keras.layers.Layer):
         return (input_shape[0], input_shape[1], self.output_feature_transform.units)
 
     def collect_neighbours(self, coordinates, features):
+        import tensorflow as tf
+        from caloGraphNN import euclidean_squared, gauss_of_lin
         
         # tf.ragged FIXME?
         # for euclidean_squared see caloGraphNN.py
@@ -156,33 +175,33 @@ class GravNet(keras.layers.Layer):
         n_batches = tf.shape(features)[0]
         
         # tf.ragged FIXME? or could that work?
-        n_vertices = tf.shape(features)[1]
-        n_features = tf.shape(features)[2]
+        n_vertices = K.shape(features)[1]
+        n_features = K.shape(features)[2]
 
-        batch_range = tf.range(0, n_batches)
-        batch_range = tf.expand_dims(batch_range, axis=1)
-        batch_range = tf.expand_dims(batch_range, axis=1)
-        batch_range = tf.expand_dims(batch_range, axis=1) # (B, 1, 1, 1)
+        batch_range = K.arange(n_batches)
+        batch_range = K.expand_dims(batch_range, axis=1)
+        batch_range = K.expand_dims(batch_range, axis=1)
+        batch_range = K.expand_dims(batch_range, axis=1) # (B, 1, 1, 1)
 
         # tf.ragged FIXME? n_vertices
-        batch_indices = tf.tile(batch_range, [1, n_vertices, self.n_neighbours - 1, 1]) # (B, V, N-1, 1)
-        vertex_indices = tf.expand_dims(neighbour_indices, axis=3) # (B, V, N-1, 1)
-        indices = tf.concat([batch_indices, vertex_indices], axis=-1)
+        batch_indices = K.tile(batch_range, [1, n_vertices, self.n_neighbours - 1, 1]) # (B, V, N-1, 1)
+        vertex_indices = K.expand_dims(neighbour_indices, axis=3) # (B, V, N-1, 1)
+        indices = K.concatenate([batch_indices, vertex_indices], axis=-1)
     
         neighbour_features = tf.gather_nd(features, indices) # (B, V, N-1, F)
     
         distance = -ranked_distances[:, :, 1:]
     
         weights = gauss_of_lin(distance * 10.)
-        weights = tf.expand_dims(weights, axis=-1)
+        weights = K.expand_dims(weights, axis=-1)
     
         # weight the neighbour_features
         neighbour_features *= weights
     
-        neighbours_max = tf.reduce_max(neighbour_features, axis=2)
-        neighbours_mean = tf.reduce_mean(neighbour_features, axis=2)
+        neighbours_max = K.max(neighbour_features, axis=2)
+        neighbours_mean = K.mean(neighbour_features, axis=2)
     
-        return tf.concat([neighbours_max, neighbours_mean], axis=-1)
+        return K.concatenate([neighbours_max, neighbours_mean], axis=-1)
 
     def get_config(self):
         config = {'n_neighbours': self.n_neighbours, 
@@ -197,87 +216,237 @@ class GravNet(keras.layers.Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-
 class GarNet(keras.layers.Layer):
-    def __init__(self, n_aggregators, n_filters, n_propagate, name, vertex_mask=None, **kwargs):
+    def __init__(self, n_aggregators, n_filters, n_propagate, simplified=False, collapse=None, input_format='xn', output_activation='tanh', mean_by_nvert=False, **kwargs):
         super(GarNet, self).__init__(**kwargs)
 
-        self.n_aggregators = n_aggregators
-        self.n_filters = n_filters
-        self.n_propagate = n_propagate
-        self.name = name
+        self.simplified = simplified
+        self.output_activation = output_activation
 
-        self.vertex_mask = vertex_mask
+        self._setup_aux_params(collapse, input_format, mean_by_nvert)
+        self._setup_transforms(n_aggregators, n_filters, n_propagate)
 
-        self.input_feature_transform = keras.layers.Dense(n_propagate, name=name+'_FLR')
-        self.aggregator_distance = keras.layers.Dense(n_aggregators, name=name+'_S')
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name=name+'_Fout')
+    def _setup_aux_params(self, collapse, input_format, mean_by_nvert):
+        if collapse is None:
+            self.collapse = None
+        elif collapse in ['mean', 'sum', 'max']:
+            self.collapse = collapse
+        else:
+            raise NotImplementedError('Unsupported collapse operation')
+
+        self.input_format = input_format
+        self.mean_by_nvert = mean_by_nvert
+
+    def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
+        self.input_feature_transform = Dense(n_propagate, name='FLR')
+        self.aggregator_distance = Dense(n_aggregators, name='S')
+        self.output_feature_transform = Dense(n_filters, activation=self.output_activation, name='Fout')
 
         self._sublayers = [self.input_feature_transform, self.aggregator_distance, self.output_feature_transform]
 
     def build(self, input_shape):
-        self.input_feature_transform.build(input_shape)
-        self.aggregator_distance.build(input_shape)
-        
-        # tf.ragged FIXME? tf.shape()?
-        self.output_feature_transform.build((input_shape[0], input_shape[1], input_shape[2] + self.aggregator_distance.units + 2 * self.aggregator_distance.units * (self.input_feature_transform.units + self.aggregator_distance.units)))
+        super(GarNet, self).build(input_shape)
+
+        if self.input_format == 'x':
+            data_shape = input_shape
+        elif self.input_format == 'xn':
+            data_shape, _ = input_shape
+        elif self.input_format == 'xen':
+            data_shape, _, _ = input_shape
+            data_shape = data_shape[:2] + (data_shape[2] + 1,)
+
+        self._build_transforms(data_shape)
 
         for layer in self._sublayers:
             self._trainable_weights.extend(layer.trainable_weights)
             self._non_trainable_weights.extend(layer.non_trainable_weights)
 
-        super(GarNet, self).build(input_shape)
+    def _build_transforms(self, data_shape):
+        self.input_feature_transform.build(data_shape)
+        self.aggregator_distance.build(data_shape)
+        self.output_feature_transform.build(data_shape[:2] + (self.aggregator_distance.units * self.input_feature_transform.units,))
 
     def call(self, x):
-        features = self.input_feature_transform(x) # (B, V, F)
-        distance = self.aggregator_distance(x) # (B, V, S)
+        data, num_vertex, vertex_mask = self._unpack_input(x)
 
-        edge_weights = gauss(distance)
+        output = self._garnet(data, num_vertex, vertex_mask,
+                              self.input_feature_transform,
+                              self.aggregator_distance,
+                              self.output_feature_transform)
 
-        features = tf.concat([features, edge_weights], axis=-1) # (B, V, F+S)
+        output = self._collapse_output(output)
 
-        if self.vertex_mask is not None:
-            features = self.vertex_mask * features
-            edge_weights = self.vertex_mask * edge_weights
+        return output
+
+    def _unpack_input(self, x):
+        if self.input_format == 'x':
+            data = x
+
+            vertex_mask = K.cast(K.not_equal(data[..., 3:4], 0.), 'float32')
+            num_vertex = K.sum(vertex_mask)
+
+        elif self.input_format in ['xn', 'xen']:
+            if self.input_format == 'xn':
+                data, num_vertex = x
+            else:
+                data_x, data_e, num_vertex = x
+                data = K.concatenate((data_x, K.reshape(data_e, (-1, data_e.shape[1], 1))), axis=-1)
+    
+            data_shape = K.shape(data)
+            B = data_shape[0]
+            V = data_shape[1]
+            vertex_indices = K.tile(K.expand_dims(K.arange(0, V), axis=0), (B, 1)) # (B, [0..V-1])
+            vertex_mask = K.expand_dims(K.cast(K.less(vertex_indices, K.cast(num_vertex, 'int32')), 'float32'), axis=-1) # (B, V, 1)
+            num_vertex = K.cast(num_vertex, 'float32')
+
+        return data, num_vertex, vertex_mask
+
+    def _garnet(self, data, num_vertex, vertex_mask, in_transform, d_compute, out_transform):
+        features = in_transform(data) # (B, V, F)
+        distance = d_compute(data) # (B, V, S)
+
+        edge_weights = vertex_mask * K.exp(-K.square(distance)) # (B, V, S)
+
+        if not self.simplified:
+            features = K.concatenate([vertex_mask * features, edge_weights], axis=-1)
+        
+        if self.mean_by_nvert:
+            def graph_mean(out, axis):
+                s = K.sum(out, axis=axis)
+                # reshape just to enable broadcasting
+                s = K.reshape(s, (-1, d_compute.units * in_transform.units)) / num_vertex
+                s = K.reshape(s, (-1, d_compute.units, in_transform.units))
+                return s
+        else:
+            graph_mean = K.mean
 
         # vertices -> aggregators
-        edge_weights_trans = tf.transpose(edge_weights, perm=(0, 2, 1)) # (B, S, V)
-        aggregated_max = self.apply_edge_weights(features, edge_weights_trans, aggregation=tf.reduce_max) # (B, S, F+S)
-        aggregated_mean = self.apply_edge_weights(features, edge_weights_trans, aggregation=tf.reduce_mean) # (B, S, F+S)
+        edge_weights_trans = K.permute_dimensions(edge_weights, (0, 2, 1)) # (B, S, V)
 
-        aggregated = tf.concat([aggregated_max, aggregated_mean], axis=-1) # (B, S, 2*(F+S))
+        aggregated_mean = self._apply_edge_weights(features, edge_weights_trans, aggregation=graph_mean) # (B, S, F)
+
+        if self.simplified:
+            aggregated = aggregated_mean
+        else:
+            aggregated_max = self._apply_edge_weights(features, edge_weights_trans, aggregation=K.max)
+            aggregated = K.concatenate([aggregated_max, aggregated_mean], axis=-1)
 
         # aggregators -> vertices
-        updated_features = self.apply_edge_weights(aggregated, edge_weights) # (B, V, 2*S*(F+S))
+        updated_features = self._apply_edge_weights(aggregated, edge_weights) # (B, V, S*F)
 
-        updated_features = tf.concat([x, updated_features, edge_weights], axis=-1) # (B, V, X+2*S*(F+S)+S)
+        if not self.simplified:
+            updated_features = K.concatenate([data, updated_features, edge_weights], axis=-1)
 
-        return self.output_feature_transform(updated_features)
+        return vertex_mask * out_transform(updated_features)
+
+    def _collapse_output(self, output):
+        if self.collapse == 'mean':
+            if self.mean_by_nvert:
+                output = K.sum(output, axis=1) / num_vertex
+            else:
+                output = K.mean(output, axis=1)
+        elif self.collapse == 'sum': 
+           output = K.sum(output, axis=1)
+        elif self.collapse == 'max':
+            output = K.max(output, axis=1)
+
+        return output
 
     def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[1], self.output_feature_transform.units)
+        return self._get_output_shape(input_shape, self.output_feature_transform)
 
-    def apply_edge_weights(self, features, edge_weights, aggregation=None):
-        features = tf.expand_dims(features, axis=1) # (B, 1, v, f)
-        edge_weights = tf.expand_dims(edge_weights, axis=3) # (B, A, v, 1)
+    def _get_output_shape(self, input_shape, out_transform):
+        if self.input_format == 'x':
+            data_shape = input_shape
+        elif self.input_format == 'xn':
+            data_shape, _ = input_shape
+        elif self.input_format == 'xen':
+            data_shape, _, _ = input_shape
 
-        # tf.ragged FIXME? broadcasting should work
+        if self.collapse is None:
+            return data_shape[:2] + (out_transform.units,)
+        else:
+            return (data_shape[0], out_transform.units)
+
+    def get_config(self):
+        config = super(GarNet, self).get_config()
+
+        config.update({
+            'simplified': self.simplified,
+            'collapse': self.collapse,
+            'input_format': self.input_format,
+            'output_activation': self.output_activation,
+            'mean_by_nvert': self.mean_by_nvert
+        })
+
+        self._add_transform_config(config)
+
+        return config
+
+    def _add_transform_config(self, config):
+        config.update({
+            'n_aggregators': self.aggregator_distance.units,
+            'n_filters': self.output_feature_transform.units,
+            'n_propagate': self.input_feature_transform.units
+        })
+
+    @staticmethod
+    def _apply_edge_weights(features, edge_weights, aggregation=None):
+        features = K.expand_dims(features, axis=1) # (B, 1, v, f)
+        edge_weights = K.expand_dims(edge_weights, axis=3) # (B, u, v, 1)
+
         out = edge_weights * features # (B, u, v, f)
-        # tf.ragged FIXME? these values won't work
-        n = features.shape[-2].value * features.shape[-1].value
 
         if aggregation:
             out = aggregation(out, axis=2) # (B, u, f)
-            n = features.shape[-1].value
+        else:
+            out = K.reshape(out, (-1, edge_weights.shape[1].value, features.shape[-1].value * features.shape[-2].value))
         
-        # tf.ragged FIXME? there might be a chance to spell out batch dim instead and use -1 for vertices?
-        return tf.reshape(out, [-1, out.shape[1].value, n]) # (B, u, n)
+        return out
+
     
-    def get_config(self):
-        config = {'n_aggregators': self.n_aggregators, 'n_filters': self.n_filters, 'n_propagate': self.n_propagate, 'name': self.name}
-        base_config = super(GarNet, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
+class GarNetStack(GarNet):
+    def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
+        self.transform_layers = []
+        # inputs are lists
+        for it, (p, a, f) in enumerate(zip(n_propagate, n_aggregators, n_filters)):
+            self.transform_layers.append((
+                keras.layers.Dense(p, name=('FLR%d' % it)),
+                keras.layers.Dense(a, name=('S%d' % it)),
+                keras.layers.Dense(f, activation=self.output_activation, name=('Fout%d' % it))
+            ))
+
+        self._sublayers = sum((list(layers) for layers in self.transform_layers), [])
+
+    def _build_transforms(self, data_shape):
+        for in_transform, d_compute, out_transform in self.transform_layers:
+            in_transform.build(data_shape)
+            d_compute.build(data_shape)
+            out_transform.build(data_shape[:2] + (d_compute.units * in_transform.units,))
+
+            data_shape = data_shape[:2] + (out_transform.units,)
+
+    def call(self, x):
+        data, num_vertex, vertex_mask = self._unpack_input(x)
+
+        for in_transform, d_compute, out_transform in self.transform_layers:
+            data = self._garnet(data, num_vertex, vertex_mask, in_transform, d_compute, out_transform)
     
+        output = self._collapse_output(data)
+
+        return output
+
+    def compute_output_shape(self, input_shape):
+        return self._get_output_shape(input_shape, self.transform_layers[-1][2])
+
+    def _add_transform_config(self, config):
+        config.update({
+            'n_propagate': list(ll[0].units for ll in self.transform_layers),
+            'n_aggregators': list(ll[1].units for ll in self.transform_layers),
+            'n_filters': list(ll[2].units for ll in self.transform_layers),
+            'n_sublayers': len(self.transform_layers)
+        })
+
     
 # tf.ragged FIXME? the last one should be no problem
 class weighted_sum_layer(keras.layers.Layer):
@@ -298,12 +467,4 @@ class weighted_sum_layer(keras.layers.Layer):
         weights = inputs[:,:,0:1] #B x E x 1
         tosum   = inputs[:,:,1:]
         weighted = weights * tosum #broadcast to B x E x F-1
-        return tf.reduce_sum(weighted, axis=1)    
-    
-    
-    
-    
-    
-    
-    
-    
+        return K.sum(weighted, axis=1)    
