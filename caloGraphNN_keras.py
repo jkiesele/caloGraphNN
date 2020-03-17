@@ -90,9 +90,9 @@ class GravNet(keras.layers.Layer):
         self.feature_dropout = feature_dropout
         self.masked_coordinate_offset = masked_coordinate_offset
         
-        self.input_feature_transform = Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
-        self.input_spatial_transform = Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
-        self.output_feature_transform = Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
+        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
+        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
+        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
 
         self._sublayers = [self.input_feature_transform, self.input_spatial_transform, self.output_feature_transform]
         if fix_coordinate_space:
@@ -238,9 +238,9 @@ class GarNet(keras.layers.Layer):
         self.mean_by_nvert = mean_by_nvert
 
     def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
-        self.input_feature_transform = Dense(n_propagate, name='FLR')
-        self.aggregator_distance = Dense(n_aggregators, name='S')
-        self.output_feature_transform = Dense(n_filters, activation=self.output_activation, name='Fout')
+        self.input_feature_transform = keras.layers.Dense(n_propagate, name='FLR')
+        self.aggregator_distance = keras.layers.Dense(n_aggregators, name='S')
+        self.output_feature_transform = keras.layers.Dense(n_filters, activation=self.output_activation, name='Fout')
 
         self._sublayers = [self.input_feature_transform, self.aggregator_distance, self.output_feature_transform]
 
@@ -406,6 +406,12 @@ class GarNet(keras.layers.Layer):
 
     
 class GarNetStack(GarNet):
+    """
+    Stacked version of GarNet. First three arguments to the constructor must be lists of integers.
+    Basically offers no performance advantage, but the configuration is consolidated (and is useful
+    when e.g. converting the layer to HLS)
+    """
+    
     def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
         self.transform_layers = []
         # inputs are lists
