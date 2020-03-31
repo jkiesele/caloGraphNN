@@ -1,31 +1,24 @@
-import keras
-import keras.backend as K
+try:
+    import tensorflow.keras as keras
+except ImportError:
+    import keras
+
+K = keras.backend
+
+try:
+    import qkeras
+
+    class NamedQDense(qkeras.QDense):
+        def add_weight(self, name=None, **kwargs):
+            return super(NamedQDense, self).add_weight(name='%s_%s' % (self.name, name), **kwargs)
+
+except ImportError:
+    pass
 
 # Hack keras Dense to propagate the layer name into saved weights
-from keras.engine.base_layer import InputSpec
-
-def Dense_build(self, input_shape):
-    assert len(input_shape) >= 2
-    input_dim = input_shape[-1]
-
-    self.kernel = self.add_weight(shape=(input_dim, self.units),
-                                  initializer=self.kernel_initializer,
-                                  name='%s_kernel' % self.name,
-                                  regularizer=self.kernel_regularizer,
-                                  constraint=self.kernel_constraint)
-    if self.use_bias:
-        self.bias = self.add_weight(shape=(self.units,),
-                                    initializer=self.bias_initializer,
-                                    name='%s_bias' % self.name,
-                                    regularizer=self.bias_regularizer,
-                                    constraint=self.bias_constraint)
-    else:
-        self.bias = None
-    self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
-    self.built = True
-
-keras.layers.Dense.build = Dense_build
-
+class NamedDense(keras.layers.Dense):
+    def add_weight(self, name=None, **kwargs):
+        return super(NamedDense, self).add_weight(name='%s_%s' % (self.name, name), **kwargs)
 
 class CreateZeroMask(keras.layers.Layer):
     '''
@@ -90,9 +83,9 @@ class GravNet(keras.layers.Layer):
         self.feature_dropout = feature_dropout
         self.masked_coordinate_offset = masked_coordinate_offset
         
-        self.input_feature_transform = keras.layers.Dense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
-        self.input_spatial_transform = keras.layers.Dense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
+        self.input_feature_transform = NamedDense(n_propagate, name = name+'_FLR', kernel_initializer=other_kernel_initializer)
+        self.input_spatial_transform = NamedDense(n_dimensions, name = name+'_S', kernel_initializer=coordinate_kernel_initializer, activation=coordinate_activation)
+        self.output_feature_transform = NamedDense(n_filters, activation='tanh', name = name+'_Fout', kernel_initializer=other_kernel_initializer)
 
         self._sublayers = [self.input_feature_transform, self.input_spatial_transform, self.output_feature_transform]
         if fix_coordinate_space:
@@ -217,41 +210,55 @@ class GravNet(keras.layers.Layer):
 
 
 class GarNet(keras.layers.Layer):
-    def __init__(self, n_aggregators, n_filters, n_propagate, simplified=False, collapse=None, input_format='xn', output_activation='tanh', mean_by_nvert=False, **kwargs):
+    def __init__(self, n_aggregators, n_filters, n_propagate,
+                 simplified=False,
+                 collapse=None,
+                 input_format='xn',
+                 output_activation='tanh',
+                 mean_by_nvert=False,
+                 quantize_transforms=False,
+                 **kwargs):
         super(GarNet, self).__init__(**kwargs)
 
-        self.simplified = simplified
-        self.output_activation = output_activation
+        self._simplified = simplified
+        self._output_activation = output_activation
+        self._quantize_transforms = quantize_transforms
 
         self._setup_aux_params(collapse, input_format, mean_by_nvert)
         self._setup_transforms(n_aggregators, n_filters, n_propagate)
 
     def _setup_aux_params(self, collapse, input_format, mean_by_nvert):
         if collapse is None:
-            self.collapse = None
+            self._collapse = None
         elif collapse in ['mean', 'sum', 'max']:
-            self.collapse = collapse
+            self._collapse = collapse
         else:
             raise NotImplementedError('Unsupported collapse operation')
 
-        self.input_format = input_format
-        self.mean_by_nvert = mean_by_nvert
+        self._input_format = input_format
+        self._mean_by_nvert = mean_by_nvert
 
     def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
-        self.input_feature_transform = keras.layers.Dense(n_propagate, name='FLR')
-        self.aggregator_distance = keras.layers.Dense(n_aggregators, name='S')
-        self.output_feature_transform = keras.layers.Dense(n_filters, activation=self.output_activation, name='Fout')
+        if self._quantize_transforms:
+            self._input_feature_transform = NamedQDense(n_propagate, kernel_quantizer='ternary', bias_quantizer='ternary', name='FLR')
+            #self._output_feature_transform = NamedQDense(n_filters, activation=self._output_activation, kernel_quantizer='ternary', bias_quantizer='ternary', name='Fout')
+            self._output_feature_transform = NamedQDense(n_filters, activation=self._output_activation, kernel_quantizer='ternary', name='Fout')
+        else:
+            self._input_feature_transform = NamedDense(n_propagate, name='FLR')
+            self._output_feature_transform = NamedDense(n_filters, activation=self._output_activation, name='Fout')
 
-        self._sublayers = [self.input_feature_transform, self.aggregator_distance, self.output_feature_transform]
+        self._aggregator_distance = NamedDense(n_aggregators, name='S')
+
+        self._sublayers = [self._input_feature_transform, self._aggregator_distance, self._output_feature_transform]
 
     def build(self, input_shape):
         super(GarNet, self).build(input_shape)
 
-        if self.input_format == 'x':
+        if self._input_format == 'x':
             data_shape = input_shape
-        elif self.input_format == 'xn':
+        elif self._input_format == 'xn':
             data_shape, _ = input_shape
-        elif self.input_format == 'xen':
+        elif self._input_format == 'xen':
             data_shape, _, _ = input_shape
             data_shape = data_shape[:2] + (data_shape[2] + 1,)
 
@@ -262,31 +269,34 @@ class GarNet(keras.layers.Layer):
             self._non_trainable_weights.extend(layer.non_trainable_weights)
 
     def _build_transforms(self, data_shape):
-        self.input_feature_transform.build(data_shape)
-        self.aggregator_distance.build(data_shape)
-        self.output_feature_transform.build(data_shape[:2] + (self.aggregator_distance.units * self.input_feature_transform.units,))
+        self._input_feature_transform.build(data_shape)
+        self._aggregator_distance.build(data_shape)
+        if self._simplified:
+            self._output_feature_transform.build(data_shape[:2] + (self._aggregator_distance.units * self._input_feature_transform.units,))
+        else:
+            self._output_feature_transform.build(data_shape[:2] + (data_shape[2] + self._aggregator_distance.units * self._input_feature_transform.units + self._aggregator_distance.units,))
 
     def call(self, x):
         data, num_vertex, vertex_mask = self._unpack_input(x)
 
         output = self._garnet(data, num_vertex, vertex_mask,
-                              self.input_feature_transform,
-                              self.aggregator_distance,
-                              self.output_feature_transform)
+                              self._input_feature_transform,
+                              self._aggregator_distance,
+                              self._output_feature_transform)
 
         output = self._collapse_output(output)
 
         return output
 
     def _unpack_input(self, x):
-        if self.input_format == 'x':
+        if self._input_format == 'x':
             data = x
 
             vertex_mask = K.cast(K.not_equal(data[..., 3:4], 0.), 'float32')
             num_vertex = K.sum(vertex_mask)
 
-        elif self.input_format in ['xn', 'xen']:
-            if self.input_format == 'xn':
+        elif self._input_format in ['xn', 'xen']:
+            if self._input_format == 'xn':
                 data, num_vertex = x
             else:
                 data_x, data_e, num_vertex = x
@@ -307,10 +317,10 @@ class GarNet(keras.layers.Layer):
 
         edge_weights = vertex_mask * K.exp(-K.square(distance)) # (B, V, S)
 
-        if not self.simplified:
+        if not self._simplified:
             features = K.concatenate([vertex_mask * features, edge_weights], axis=-1)
         
-        if self.mean_by_nvert:
+        if self._mean_by_nvert:
             def graph_mean(out, axis):
                 s = K.sum(out, axis=axis)
                 # reshape just to enable broadcasting
@@ -325,7 +335,7 @@ class GarNet(keras.layers.Layer):
 
         aggregated_mean = self._apply_edge_weights(features, edge_weights_trans, aggregation=graph_mean) # (B, S, F)
 
-        if self.simplified:
+        if self._simplified:
             aggregated = aggregated_mean
         else:
             aggregated_max = self._apply_edge_weights(features, edge_weights_trans, aggregation=K.max)
@@ -334,36 +344,36 @@ class GarNet(keras.layers.Layer):
         # aggregators -> vertices
         updated_features = self._apply_edge_weights(aggregated, edge_weights) # (B, V, S*F)
 
-        if not self.simplified:
+        if not self._simplified:
             updated_features = K.concatenate([data, updated_features, edge_weights], axis=-1)
 
         return vertex_mask * out_transform(updated_features)
 
     def _collapse_output(self, output):
-        if self.collapse == 'mean':
-            if self.mean_by_nvert:
+        if self._collapse == 'mean':
+            if self._mean_by_nvert:
                 output = K.sum(output, axis=1) / num_vertex
             else:
                 output = K.mean(output, axis=1)
-        elif self.collapse == 'sum': 
+        elif self._collapse == 'sum': 
            output = K.sum(output, axis=1)
-        elif self.collapse == 'max':
+        elif self._collapse == 'max':
             output = K.max(output, axis=1)
 
         return output
 
     def compute_output_shape(self, input_shape):
-        return self._get_output_shape(input_shape, self.output_feature_transform)
+        return self._get_output_shape(input_shape, self._output_feature_transform)
 
     def _get_output_shape(self, input_shape, out_transform):
-        if self.input_format == 'x':
+        if self._input_format == 'x':
             data_shape = input_shape
-        elif self.input_format == 'xn':
+        elif self._input_format == 'xn':
             data_shape, _ = input_shape
-        elif self.input_format == 'xen':
+        elif self._input_format == 'xen':
             data_shape, _, _ = input_shape
 
-        if self.collapse is None:
+        if self._collapse is None:
             return data_shape[:2] + (out_transform.units,)
         else:
             return (data_shape[0], out_transform.units)
@@ -372,11 +382,12 @@ class GarNet(keras.layers.Layer):
         config = super(GarNet, self).get_config()
 
         config.update({
-            'simplified': self.simplified,
-            'collapse': self.collapse,
-            'input_format': self.input_format,
-            'output_activation': self.output_activation,
-            'mean_by_nvert': self.mean_by_nvert
+            'simplified': self._simplified,
+            'collapse': self._collapse,
+            'input_format': self._input_format,
+            'output_activation': self._output_activation,
+            'quantize_transforms': self._quantize_transforms,
+            'mean_by_nvert': self._mean_by_nvert
         })
 
         self._add_transform_config(config)
@@ -385,9 +396,9 @@ class GarNet(keras.layers.Layer):
 
     def _add_transform_config(self, config):
         config.update({
-            'n_aggregators': self.aggregator_distance.units,
-            'n_filters': self.output_feature_transform.units,
-            'n_propagate': self.input_feature_transform.units
+            'n_aggregators': self._aggregator_distance.units,
+            'n_filters': self._output_feature_transform.units,
+            'n_propagate': self._input_feature_transform.units
         })
 
     @staticmethod
@@ -400,7 +411,10 @@ class GarNet(keras.layers.Layer):
         if aggregation:
             out = aggregation(out, axis=2) # (B, u, f)
         else:
-            out = K.reshape(out, (-1, edge_weights.shape[1].value, features.shape[-1].value * features.shape[-2].value))
+            try:
+                out = K.reshape(out, (-1, edge_weights.shape[1].value, features.shape[-1].value * features.shape[-2].value))
+            except AttributeError: # TF 2
+                out = K.reshape(out, (-1, edge_weights.shape[1], features.shape[-1] * features.shape[-2]))
         
         return out
 
@@ -413,29 +427,37 @@ class GarNetStack(GarNet):
     """
     
     def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
-        self.transform_layers = []
+        self._transform_layers = []
         # inputs are lists
         for it, (p, a, f) in enumerate(zip(n_propagate, n_aggregators, n_filters)):
-            self.transform_layers.append((
-                keras.layers.Dense(p, name=('FLR%d' % it)),
-                keras.layers.Dense(a, name=('S%d' % it)),
-                keras.layers.Dense(f, activation=self.output_activation, name=('Fout%d' % it))
-            ))
+            if self._quantize_transforms:
+                input_feature_transform = NamedQDense(p, kernel_quantizer='ternary', bias_quantizer='ternary', name=('FLR%d' % it))
+                output_feature_transform = NamedQDense(f, activation=self._output_activation, kernel_quantizer='ternary', bias_quantizer='ternary', name=('Fout%d' % it))
+            else:
+                input_feature_transform = NamedDense(p, name=('FLR%d' % it))
+                output_feature_transform = NamedDense(f, activation=self._output_activation, name=('Fout%d' % it))
 
-        self._sublayers = sum((list(layers) for layers in self.transform_layers), [])
+            aggregator_distance = NamedDense(a, name=('S%d' % it))
+
+            self._transform_layers.append((input_feature_transform, aggregator_distance, output_feature_transform))
+
+        self._sublayers = sum((list(layers) for layers in self._transform_layers), [])
 
     def _build_transforms(self, data_shape):
-        for in_transform, d_compute, out_transform in self.transform_layers:
+        for in_transform, d_compute, out_transform in self._transform_layers:
             in_transform.build(data_shape)
             d_compute.build(data_shape)
-            out_transform.build(data_shape[:2] + (d_compute.units * in_transform.units,))
+            if self._simplified:
+                out_transform.build(data_shape[:2] + (d_compute.units * in_transform.units,))
+            else:
+                out_transform.build(data_shape[:2] + (data_shape[2] + d_compute.units * in_transform.units + d_compute.units,))
 
             data_shape = data_shape[:2] + (out_transform.units,)
 
     def call(self, x):
         data, num_vertex, vertex_mask = self._unpack_input(x)
 
-        for in_transform, d_compute, out_transform in self.transform_layers:
+        for in_transform, d_compute, out_transform in self._transform_layers:
             data = self._garnet(data, num_vertex, vertex_mask, in_transform, d_compute, out_transform)
     
         output = self._collapse_output(data)
@@ -443,14 +465,14 @@ class GarNetStack(GarNet):
         return output
 
     def compute_output_shape(self, input_shape):
-        return self._get_output_shape(input_shape, self.transform_layers[-1][2])
+        return self._get_output_shape(input_shape, self._transform_layers[-1][2])
 
     def _add_transform_config(self, config):
         config.update({
-            'n_propagate': list(ll[0].units for ll in self.transform_layers),
-            'n_aggregators': list(ll[1].units for ll in self.transform_layers),
-            'n_filters': list(ll[2].units for ll in self.transform_layers),
-            'n_sublayers': len(self.transform_layers)
+            'n_propagate': list(ll[0].units for ll in self._transform_layers),
+            'n_aggregators': list(ll[1].units for ll in self._transform_layers),
+            'n_filters': list(ll[2].units for ll in self._transform_layers),
+            'n_sublayers': len(self._transform_layers)
         })
 
     
