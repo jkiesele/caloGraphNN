@@ -1,8 +1,10 @@
 # caloGraphNN
 
 Repository that contains minimal implementations of the graph neural network layers discussed in [arxiv:1902.07987].
-All necessary functions are included in the individual python files. The layers can be used analogously to tensorflow layers. 
-Keras wrappers will follow.
+The code provided here is using tensorflow and or keras.
+For a pythontorch implementation, please refer to: https://github.com/rusty1s/pytorch_geometric
+
+For tensorflow and keras, all necessary functions are included in the individual python files in this repository. No further dependencies are needed. The layers can be used analogously to tensorflow layers.
 The bare layers can be found in caloGraphNN.py, and can be used in a similar way as bare tensorflow layers, and therefore can be easily implemented in custom DNN architectures.
 The source code for models described in the paper is in tensorflow_models.py for reference.
 
