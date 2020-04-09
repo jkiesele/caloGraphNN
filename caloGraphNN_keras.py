@@ -6,11 +6,14 @@ except ImportError:
 K = keras.backend
 
 try:
-    import qkeras
+    from qkeras import QDense, ternary
 
-    class NamedQDense(qkeras.QDense):
+    class NamedQDense(QDense):
         def add_weight(self, name=None, **kwargs):
             return super(NamedQDense, self).add_weight(name='%s_%s' % (self.name, name), **kwargs)
+
+    def ternary_1_05():
+        return ternary(alpha=1., threshold=0.5)
 
 except ImportError:
     pass
@@ -240,9 +243,8 @@ class GarNet(keras.layers.Layer):
 
     def _setup_transforms(self, n_aggregators, n_filters, n_propagate):
         if self._quantize_transforms:
-            self._input_feature_transform = NamedQDense(n_propagate, kernel_quantizer='ternary', bias_quantizer='ternary', name='FLR')
-            #self._output_feature_transform = NamedQDense(n_filters, activation=self._output_activation, kernel_quantizer='ternary', bias_quantizer='ternary', name='Fout')
-            self._output_feature_transform = NamedQDense(n_filters, activation=self._output_activation, kernel_quantizer='ternary', name='Fout')
+            self._input_feature_transform = NamedQDense(n_propagate, kernel_quantizer=ternary_1_05(), bias_quantizer=ternary_1_05(), name='FLR')
+            self._output_feature_transform = NamedQDense(n_filters, activation=self._output_activation, kernel_quantizer=ternary_1_05(), name='Fout')
         else:
             self._input_feature_transform = NamedDense(n_propagate, name='FLR')
             self._output_feature_transform = NamedDense(n_filters, activation=self._output_activation, name='Fout')
@@ -431,8 +433,8 @@ class GarNetStack(GarNet):
         # inputs are lists
         for it, (p, a, f) in enumerate(zip(n_propagate, n_aggregators, n_filters)):
             if self._quantize_transforms:
-                input_feature_transform = NamedQDense(p, kernel_quantizer='ternary', bias_quantizer='ternary', name=('FLR%d' % it))
-                output_feature_transform = NamedQDense(f, activation=self._output_activation, kernel_quantizer='ternary', bias_quantizer='ternary', name=('Fout%d' % it))
+                input_feature_transform = NamedQDense(p, kernel_quantizer=ternary_1_05(), bias_quantizer=ternary_1_05(), name=('FLR%d' % it))
+                output_feature_transform = NamedQDense(f, activation=self._output_activation, kernel_quantizer=ternary_1_05(), name=('Fout%d' % it))
             else:
                 input_feature_transform = NamedDense(p, name=('FLR%d' % it))
                 output_feature_transform = NamedDense(f, activation=self._output_activation, name=('Fout%d' % it))
