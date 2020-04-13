@@ -1,6 +1,10 @@
 import sys
 import traceback
-import keras
+try:
+    import tensorflow.keras as keras
+except ImportError:
+    import keras
+
 from caloGraphNN_keras import *
 
 class GravNetClusteringModel(keras.Model):
