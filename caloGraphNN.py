@@ -147,7 +147,7 @@ def layer_GarNet(vertices_in,
     vertices_in = tf.layers.dense(vertices_in,n_propagate,activation=None)
     
     agg_nodes = tf.layers.dense(vertices_in_orig,n_aggregators,activation=None) #BxVxNA, vertices_in: BxVxF
-    agg_nodes = gauss(agg_nodes)
+    agg_nodes = gauss_of_lin(agg_nodes)
     vertices_in = tf.concat([vertices_in,agg_nodes], axis=-1)
     
     edges = tf.expand_dims(agg_nodes,axis=3) # BxVxNAx1
@@ -185,7 +185,7 @@ def layer_GravNet(vertices_in,
         neighbours = tf.gather_nd(vertices, indexing)  #BxVxNxF
         distance = tf.expand_dims(distance,axis=3)
         distance = distance*10. # input is tanh activated or batch normed, allow for some more spread
-        edges = gauss_of_lin(distance)[:,:,1:,:]
+        edges = gauss(distance)[:,:,1:,:]
         neighbours = neighbours[:,:,1:,:]
         scaled_feat = edges*neighbours
         collapsed = tf.reduce_max(scaled_feat, axis=2)
